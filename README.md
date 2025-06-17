@@ -10,3 +10,6 @@
 - Biblioteka OpenCV
 - Wybrane przykłady ML
 
+
+** Autor: Marcin Kowalski **
+
