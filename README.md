@@ -11,5 +11,5 @@
 - Wybrane przykłady ML
 
 
-** Autor: Marcin Kowalski **
+Autor: Marcin Kowalski
 
