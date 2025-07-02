@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+        }
+
+        body {
+            display: flex;         
+            justify-content: center;
+            min-height: 100vh;
+            text-align: center;
+        }
+        
+        canvas {
+            border: 1px solid #b9bfc9;
+            float: left;
+
+        }
+
+        .predictions {
+            font-weight: bold;
+        }        
+    </style>
+</head>
+<body>
+    <div id="container">      
+        <h1>Rozpoznawanie rysowanych wzorców</h1>
+        <label for="functionSelect">Wybierz model SSN:</label>
+        <select id="functionSelect" onchange="loadSelectedModel()">
+            <option value="digits1">Digits v1</option>
+            <option value="digits2">Digits v2</option>
+            <!-- dodatkowe modele w formacie:
+
+            <option value="nazwa_modelu_w_folderze_models">Nazwa wyświetlana</option>
+            
+            -->
+        </select>
+        <p>[Esc] czyści obszar rysowania</p>        
+        <h3 class="predictions" id="predictions"></h3>    
+
+                   
+        <canvas id="drawBoard" width="400px" height="400px"></canvas>
+        <canvas id="probabilityPieChart" width="400" height="400"></canvas>
+        
+    </div>
+           
+    <script>
+
+        let drawBoard = document.getElementById("drawBoard");
+        let ctx = drawBoard.getContext('2d');
+        let drag = false;
+        let pos = { x: 0, y: 0 };
+        let model = null;
+        let predDiv = document.getElementById("predictions");
+        let probabilityPieChart;
+        let classLabels = null;
+        let labelsColors = [];
+
+        async function loadSelectedModel() {
+            const functionName = document.getElementById('functionSelect').value;
+            model = await tf.loadLayersModel(`models/${functionName}/model.json`);      
+            
+            classLabels = null;
+
+            labelsColors =  generateColors(model.output.shape[1]);
+        
+            
+            fetch(`models/${functionName}/metadata.json`)
+                .then(response => {
+                    if (response.ok) {
+                        return response.json();
+                    }                    
+                })
+                .then(data => {
+                    classLabels = data.labels;
+                })
+                .catch(error => {
+                });
+            
+            predictModel();
+        }
+
+        function setPos(e) {
+            pos.x = e.clientX - ctx.canvas.offsetLeft;
+            pos.y = e.clientY - ctx.canvas.offsetTop;
+        }
+
+        drawBoard.addEventListener('contextmenu',function(e) {
+            e.preventDefault();            
+        })
+        
+        function clearCanvas() {
+            ctx.clearRect(0, 0, drawBoard.width, drawBoard.height);
+            ctx.fillStyle = "#000";
+            ctx.fillRect(0, 0, drawBoard.width, drawBoard.height);
+            predDiv.innerHTML = "Oczekuję na rysunek...";
+        }
+
+        document.addEventListener('keydown', function(event){
+            if(event.key === "Escape"){
+                clearCanvas();        
+            }
+        });
+
+
+        drawBoard.addEventListener('mousedown',  function (e) {  
+            drag = true; 
+            setPos(e);
+        });
+
+        drawBoard.addEventListener('mouseup', function () { 
+            drag = false; 
+            predictModel();
+        });
+
+
+        drawBoard.addEventListener('mousemove',  function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (drag) {
+                ctx.beginPath();
+                ctx.lineWidth = 10;               
+                ctx.strokeStyle = 'white';
+                ctx.lineCap = 'round';
+                ctx.moveTo(pos.x, pos.y);
+                setPos(e);
+                ctx.lineTo(pos.x, pos.y);
+                ctx.stroke();                
+            }
+        });
+        
+        function generateColors(n) {
+            const colors = [];
+
+            for (let i = 0; i < n; i++) {
+                const r = Math.floor(Math.random() * 256);
+                const g = Math.floor(Math.random() * 256);
+                const b = Math.floor(Math.random() * 256);
+
+                colors.push(`rgb(${r}, ${g}, ${b})`);
+            }
+
+            return colors;
+        }
+
+        async function predictModel() {
+
+            imageData = ctx.getImageData(0, 0, drawBoard.width, drawBoard.height);
+            console.log(0, 0, drawBoard.width, drawBoard.height)
+            let width = model.input.shape[1];
+            let height = model.input.shape[2];
+            let depth = model.input.shape[3];
+            let nClasses = model.output.shape[1];
+
+            console.log(model.input);
+
+            if(classLabels == null) {
+                classLabels = Array(nClasses).fill(0).map((_, i) => `${i}`);                
+            }
+
+            
+            image = tf.browser.fromPixels(imageData,depth);
+
+            image = tf.image.resizeBilinear(image, [width,height]).expandDims(0);
+
+            image = tf.cast(image, 'float32').div(255.0);
+
+            prediction = model.predict(image);
+            
+            const predictionProbabilities = prediction.dataSync();  
+            console.log(predictionProbabilities);          
+
+            predDiv.innerHTML = "Klasyfikacja: " + classLabels[prediction.argMax(1).dataSync()];
+
+            const chart = document.getElementById('probabilityPieChart').getContext('2d');
+            if (probabilityPieChart) {
+                probabilityPieChart.destroy();
+            }
+            probabilityPieChart = new Chart(chart, {
+                type: 'pie',
+                data: {
+                    labels: classLabels,
+                    datasets: [{
+                        data: predictionProbabilities,
+                        backgroundColor: labelsColors
+                        // backgroundColor: ['red', 'blue', 'green', 'yellow', 'orange', 'purple', 'cyan', 'magenta', 'lime', 'pink']
+                    }]
+                },
+                options: {
+                    animation: {
+                        duration: 500
+                    },
+                    responsive: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        },
+                        title: {
+                            display: true,
+                            text: 'Rozkład prawdopodobieństw dla każdej klasy'
+                        }
+                    }
+                }
+            });            
+        }
+
+        loadSelectedModel();
+        clearCanvas();
+    </script>
+
+</body>
+</html>
